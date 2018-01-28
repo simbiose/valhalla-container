@@ -1,0 +1,14 @@
+# valhalla-container
+
+
+## build docker image
+```
+$ docker build -t valhalla . 
+```
+
+## run docker
+
+```
+$ docker run -it -v $(pwd)/data:/data/valhalla --name router \
+  -m 3000m --memory-swap 3000m --oom-kill-disable valhalla
+```

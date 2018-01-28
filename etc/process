@@ -1,0 +1,141 @@
+#!/bin/sh
+
+# check file exists for more than 1 day
+
+start=$(date +%s)
+CHECK_EVERY=$((CHECK_EVERY - 1))
+check=$((CHECK_EVERY * 60))
+process=0
+
+#
+# log
+#
+
+log() {
+  printf "\033[0;32m[+] $1\033[0m\n"
+}
+
+#
+# err
+#
+
+err() {
+  printf "\033[0;35m[!] $1\033[0m\n"
+}
+
+#
+# download pbf
+#
+
+download() {
+  file=$(basename $2)
+  index=0
+
+  cd $1
+  rm -f $file.osm.*
+
+  curl -O http://download.geofabrik.de/$2.osm.pbf.md5 \
+    && log "finished download of $file.osm.pbf.md5" \
+    || { err "failed to get $file.osm.pbf.md5"; exit 1; }
+
+  while [[ $index -lt 4 ]]; do
+    axel -a -n 4 -o $file.osm.pbf http://download.geofabrik.de/$2.osm.pbf
+    md5sum -c $file.osm.pbf.md5 >/dev/null \
+      && { log "$file.osm.pbf download completed with success"; break; } \
+      || err "#$((index + 1)) attemp to download $file.osm.pbf failed"
+
+    sleep 60
+
+    index=$((index + 1))
+  done
+
+  cd -
+}
+
+#
+# update pbf
+#
+
+update() {
+  file=$(basename $2)
+
+  cd $1
+
+  [ -f $file.poly ] || {
+    curl -O http://download.geofabrik.de/$2.poly \
+      && log "finished download of $file.poly" \
+      || { err "failed to get $file.poly"; exit 1; }
+  }
+
+  osmupdate $file.osm.pbf $file.new.osm.pbf -B=$2.poly --daily -v \
+    && log "$file.osm.pbf updated with success" \
+    || { err "failed to update $file.osm.pbf"; exit 1 }
+
+  mv $file.new.osm.pbf $file.osm.pbf
+
+  cd -
+}
+
+#
+# loop thru pbf's
+#
+
+for item in $(echo $PBFS | tr ',' '\n'); do
+  file=$(basename $item)
+
+  [ -f $DATA_DIR/$file.osm.pbf ] && {
+    log "check against $file.osm.pbf for new version"
+
+    [ -z "$(find $DATA_DIR -name $file.osm.pbf -mmin +$check)" ] || {
+      log "$file.osm.pbf is old, should be downloaded"
+  
+      update $DATA_DIR $item
+      process=1
+    } && log "$file.osm.pbf is not old"
+  } || {
+    log "theres no $file.osm.pbf, should be downloaded"
+
+    download $DATA_DIR $item
+    process=1
+  }
+
+  rm -f $DATA_DIR/$file.osm.pbf.md5
+done
+
+#
+# process pbf's when time is right
+#
+
+[[ $process -gt 0 ]] && {
+  FILES=""
+
+  cd $DATA_DIR
+
+  for file in $DATA_DIR/*osm.pbf; do
+    FILES="$FILES $file"
+  done
+
+  svc -d /service/router
+
+  log "building tiles for$FILES"
+
+  valhalla_build_tiles -c $CONF_FILE $FILES \
+    && log "tiles built sucessfuly" \
+    || { err "failed to build tiles"; exit 1; }
+
+  sleep 60
+
+  find $TILE_DIR -type f | sort -n | \
+    { tee /dev/fd/4 | wc -l | awk '{print $1" files"}' >&2 } 4>&1 | \
+    tar cf $TILE_DIR/tiles.tar --no-recursion -T - \
+    && log "tiles compressed" \
+    || { err "failed to compress tiles"; exit 1; }
+
+  svc -u /service/router
+
+  cd -
+}
+
+seconds=$(($(date +%s)-start))
+
+log "took $((seconds / 60))m $((seconds % 60))s to complete"
