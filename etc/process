@@ -1,8 +1,8 @@
 #!/bin/sh
 
 # check file exists for more than 1 day
-
 start=$(date +%s)
+LOCK=/run/lock/process.lock
 CHECK_EVERY=$((CHECK_EVERY - 1))
 check=$((CHECK_EVERY * 60))
 process=0
@@ -22,6 +22,16 @@ log() {
 err() {
   printf "\033[0;35m[!] $1\033[0m\n"
 }
+
+#
+[ -e $LOCK ] && {
+  ps -p $(cat $LOCK) >/dev/null && {
+    err "another instance already running"
+    exit
+  }
+}
+
+echo $$ > $LOCK
 
 #
 # download pbf
@@ -58,18 +68,20 @@ download() {
 
 update() {
   file=$(basename $2)
+  full_poly=$(echo $2 | sed s/-latest//)
+  poly=$(basename $full_poly)
 
   cd $1
 
-  [ -f $file.poly ] || {
-    curl -O http://download.geofabrik.de/$2.poly \
-      && log "finished download of $file.poly" \
-      || { err "failed to get $file.poly"; exit 1; }
+  [ -f $poly.poly ] || {
+    curl -O http://download.geofabrik.de/$full_poly.poly \
+      && log "finished download of $poly.poly" \
+      || { err "failed to get $poly.poly"; exit 1; }
   }
 
-  osmupdate $file.osm.pbf $file.new.osm.pbf -B=$2.poly --daily -v \
+  osmupdate $file.osm.pbf $file.new.osm.pbf -B=$poly.poly --daily -v \
     && log "$file.osm.pbf updated with success" \
-    || { err "failed to update $file.osm.pbf"; exit 1 }
+    || { err "failed to update $file.osm.pbf"; exit 1; }
 
   mv $file.new.osm.pbf $file.osm.pbf
 
@@ -87,7 +99,7 @@ for item in $(echo $PBFS | tr ',' '\n'); do
     log "check against $file.osm.pbf for new version"
 
     [ -z "$(find $DATA_DIR -name $file.osm.pbf -mmin +$check)" ] || {
-      log "$file.osm.pbf is old, should be downloaded"
+      log "$file.osm.pbf is old, should be updated"
   
       update $DATA_DIR $item
       process=1
@@ -125,8 +137,8 @@ done
 
   sleep 60
 
-  find $TILE_DIR -type f | sort -n | \
-    { tee /dev/fd/4 | wc -l | awk '{print $1" files"}' >&2 } 4>&1 | \
+  find $TILE_DIR -type f | sort -n | grep -v tiles\.tar | \
+    { tee /dev/fd/4 | wc -l | awk '{print $1" files"}' >&2; } 4>&1 | \
     tar cf $TILE_DIR/tiles.tar --no-recursion -T - \
     && log "tiles compressed" \
     || { err "failed to compress tiles"; exit 1; }

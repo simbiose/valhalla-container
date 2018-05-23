@@ -6,6 +6,8 @@
   mkdir -p /var/log/router/main
   mkdir -p /var/log/nginx/main
 
+  env > /etc/.env
+
   cat << 'NGINX' > /service/nginx/run
 #!/bin/sh
 exec 2>&1
@@ -17,7 +19,7 @@ NGINX
 #!/bin/sh
 exec 2>&1
 echo "starting valhalla router"
-exec /usr/bin/valhalla_route_service $CONF_FILE 1
+exec /usr/bin/valhalla_service $CONF_FILE 1
 ROUTER
 
   cat << 'RLOG' > /service/router/log/run
@@ -44,7 +46,7 @@ server {
 NCONF
 
   cat << 'CRON' > /etc/cron.d/process
-30 2 * * * root /etc/process >> /var/log/process.log 2>&1
+30 2 * * * root export $(cat /etc/.env | xargs) && /etc/process >> /var/log/process.log 2>&1
 CRON
 
   chmod 755 /service/nginx/run /service/router/run \
