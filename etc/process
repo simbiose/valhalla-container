@@ -127,21 +127,33 @@ done
     FILES="$FILES $file"
   done
 
+  log "stopping router service"
+
   svc -d /service/router
 
   log "building tiles for$FILES"
 
   valhalla_build_tiles -c $CONF_FILE $FILES \
-    && log "tiles built sucessfuly" \
-    || { err "failed to build tiles"; exit 1; }
+    && log "tiles built sucessfuly" || {
+      err "failed to build tiles"
+      log "restoring old router service"
+      svc -u /service/router
+      exit 1
+    }
 
   sleep 60
 
+  log "compressing tiles"
+
   find $TILE_DIR -type f | sort -n | grep -v tiles\.tar | \
     { tee /dev/fd/4 | wc -l | awk '{print $1" files"}' >&2; } 4>&1 | \
-    tar cf $TILE_DIR/tiles.tar --no-recursion -T - \
-    && log "tiles compressed" \
-    || { err "failed to compress tiles"; exit 1; }
+    tar cf $TILE_DIR/tiles_new.tar --no-recursion -T - && {
+      mv $TILE_DIR/tiles_new.tar $TILE_DIR/tiles.tar
+      log "tiles compressed, starting router service"
+    } || {
+      err "failed to compress tiles"
+      log "restoring old router service"
+    }
 
   svc -u /service/router
 
